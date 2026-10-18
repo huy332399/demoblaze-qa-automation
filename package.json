@@ -16,7 +16,8 @@
     "test:mobile": "playwright test --project=\"Mobile Chrome\"",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
-    "report": "playwright show-report"
+    "report": "playwright show-report",
+    "generate:docs": "node --experimental-strip-types docs/generate-test-cases.ts"
   },
   "keywords": [
     "playwright",
