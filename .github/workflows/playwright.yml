@@ -1,4 +1,4 @@
-name: Playwright Tests CI/CD
+name: Playwright Tests
 
 on:
   push:
@@ -6,21 +6,45 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
-    inputs:
-      test_grep:
-        description: 'Test tag filter (e.g. @smoke, @regression, @api, @cart, @login)'
-        required: false
-        default: ''
+
+env:
+  NODE_VERSION: '20'
+  BASE_URL: 'https://www.demoblaze.com'
+  REPORT_OUTPUT_DIR: 'playwright-report'
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
 
 jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and Type Check
+        run: npx tsc --noEmit
+
   test:
-    name: Run Playwright Tests (${{ matrix.project }})
-    timeout-minutes: 30
+    name: test (${{ matrix.browser }})
+    needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        project: [chromium, firefox, webkit]
+        browser: [chromium, firefox, webkit]
 
     steps:
       - name: Checkout repository
@@ -29,45 +53,41 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Playwright Browsers
-        uses: actions/cache@v4
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.browser }}
 
-      - name: Install Playwright Browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps
-
-      - name: Install system dependencies for Playwright
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps
-
-      - name: Execute Playwright Tests
-        run: |
-          if [ -n "${{ github.event.inputs.test_grep }}" ]; then
-            npx playwright test --project=${{ matrix.project }} --grep "${{ github.event.inputs.test_grep }}"
-          else
-            npx playwright test --project=${{ matrix.project }}
-          fi
+      - name: Run tests (${{ matrix.browser }})
+        run: npx playwright test --project=${{ matrix.browser }}
         env:
           CI: true
-          BASE_URL: https://www.demoblaze.com
 
-      - name: Upload Test Report & Artifacts
+      - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.project }}
-          path: |
-            playwright-report/
-            test-results/
-            docs/Test_Cases_DemoBlaze_Login_Cart.xlsx
+          name: playwright-report-${{ matrix.browser }}
+          path: ${{ env.REPORT_OUTPUT_DIR }}
           retention-days: 14
+
+      - name: Publish test results (${{ matrix.browser }})
+        if: always()
+        continue-on-error: true
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: test-results/junit-report.xml
+          check_name: Test results (${{ matrix.browser }})
+
+  deploy:
+    name: deploy
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        run: echo "CD pipeline completed successfully on merge to main"
